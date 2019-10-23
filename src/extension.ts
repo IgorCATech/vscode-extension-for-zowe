@@ -122,18 +122,20 @@ export async function activate(context: vscode.ExtensionContext) {
     const spoolProvider = new SpoolProvider();
     const providerRegistration = vscode.Disposable.from(
         vscode.workspace.registerTextDocumentContentProvider(SpoolProvider.scheme, spoolProvider)
-    );
-    context.subscriptions.push(spoolProvider, providerRegistration);
-
-    if (datasetProvider) {
-        vscode.commands.registerCommand("zowe.addSession", async () => addSession(datasetProvider));
-        vscode.commands.registerCommand("zowe.addFavorite", async (node) => datasetProvider.addFavorite(node));
-        vscode.commands.registerCommand("zowe.refreshAll", () => refreshAll(datasetProvider));
-        vscode.commands.registerCommand("zowe.refreshNode", (node) => refreshPS(node));
-        vscode.commands.registerCommand("zowe.pattern", (node) => datasetProvider.datasetFilterPrompt(node));
-        vscode.commands.registerCommand("zowe.ZoweNode.openPS", (node) => openPS(node, true));
-        vscode.workspace.onDidSaveTextDocument(async (savedFile) => {
-            log.debug(localize("onDidSaveTextDocument1",
+        );
+        context.subscriptions.push(spoolProvider, providerRegistration);
+        
+        if (datasetProvider) {
+            vscode.commands.registerCommand("zowe.addSession", async () => addSession(datasetProvider));
+            vscode.commands.registerCommand("zowe.addFavorite", async (node) => datasetProvider.addFavorite(node));
+            vscode.commands.registerCommand("zowe.refreshAll", () => refreshAll(datasetProvider));
+            vscode.commands.registerCommand("zowe.refreshNode", (node) => refreshPS(node));
+            vscode.commands.registerCommand("zowe.pattern", (node) => datasetProvider.datasetFilterPrompt(node));
+            vscode.commands.registerCommand("zowe.ZoweNode.openPS", (node) => openPS(node, true));
+            vscode.workspace.onDidSaveTextDocument(async (savedFile) => {
+                console.log("TRIGGERING SAVE FILE")
+                console.log("DONE AFTER THE FILE IS SAVED!!!!")
+                log.debug(localize("onDidSaveTextDocument1",
                 "File was saved -- determining whether the file is a USS file or Data set.\n Comparing (case insensitive) ") +
                 savedFile.fileName +
                 localize("onDidSaveTextDocument2", " against directory ") +
@@ -149,6 +151,45 @@ export async function activate(context: vscode.ExtensionContext) {
                 localize("activate.didSaveText.notDataSet", " is not a data set or USS file "));
             }
         });
+        vscode.commands.registerCommand("zowe.safeSave", async (node) => safeSave(node));
+        vscode.workspace.onWillSaveTextDocument( (saveEvent1) => {
+            saveEvent1.waitUntil( async (saveEvent) => {
+                let doc = saveEvent.document;
+            const start = path.join(DS_DIR + path.sep).length;
+            const ending = doc.fileName.substring(start);
+            const sesName = ending.substring(0, ending.indexOf(path.sep));
+            console.log(DS_DIR)
+            console.log(start)
+            console.log(ending)
+            console.log(sesName)
+            console.log("BEFORE SAVING - CALLING SAFE SAVE")
+            if (saveEvent.document.fileName.toUpperCase().indexOf(DS_DIR.toUpperCase()) >= 0) {
+                log.debug(localize("activate.didSaveText.isDataSet", "File is a data set-- saving "));
+                
+                const start = path.join(DS_DIR + path.sep).length;
+                const ending = doc.fileName.substring(start);
+                const sesName = ending.substring(0, ending.indexOf(path.sep));
+                // get session from session name
+                const sesNode = (await datasetProvider.getChildren()).find((child) =>
+                    child.label.trim() === sesName);
+                const label = doc.fileName.substring(doc.fileName.lastIndexOf(path.sep) + 1,
+                checkForAddedSuffix(doc.fileName) ? doc.fileName.lastIndexOf(".") : doc.fileName.length);
+                let node = (await sesNode.getChildren()).find((child) => child.label.trim() === label);
+                console.log("BEFORE CALLING SAFE SAVE")
+                await safeSave(node); // TODO MISSED TESTING
+                
+                
+                
+                // } else if (savedFile.fileName.toUpperCase().indexOf(USS_DIR.toUpperCase()) >= 0) {
+                    //     log.debug(localize("activate.didSaveText.isUSSFile", "File is a USS file -- saving"));
+                    //     await saveUSSFile(savedFile, ussFileProvider); // TODO MISSED TESTING
+                } else {
+                    log.debug(localize("activate.didSaveText.file", "File ") + saveEvent.document.fileName +
+                    localize("activate.didSaveText.notDataSet", " is not a data set or USS file "));
+                }
+            });
+            
+            });
         vscode.commands.registerCommand("zowe.createDataset", (node) => createFile(node, datasetProvider));
         vscode.commands.registerCommand("zowe.createMember", (node) => createMember(node, datasetProvider));
         vscode.commands.registerCommand("zowe.deleteDataset", (node) => deleteDataset(node, datasetProvider));
@@ -158,7 +199,6 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand("zowe.editMember", (node) => openPS(node, false));
         vscode.commands.registerCommand("zowe.removeSession", async (node) => datasetProvider.deleteSession(node));
         vscode.commands.registerCommand("zowe.removeFavorite", async (node) => datasetProvider.removeFavorite(node));
-        vscode.commands.registerCommand("zowe.safeSave", async (node) => safeSave(node));
         vscode.commands.registerCommand("zowe.saveSearch", async (node) => datasetProvider.addFavorite(node));
         vscode.commands.registerCommand("zowe.removeSavedSearch", async (node) => datasetProvider.removeFavorite(node));
         vscode.commands.registerCommand("zowe.submitJcl", async () => submitJcl(datasetProvider));
@@ -1262,11 +1302,17 @@ export async function safeSave(node: ZoweNode) {
                 throw Error(localize("safeSave.error.invalidNode", "safeSave() called from invalid node."));
         }
         log.debug(localize("safeSave.log.debug.invoke", "Invoking safesave for data set ") + label);
+        console.log("11 trying safe save")
+        console.log("11 downloading file")
+        console.log(getDocumentFilePath(label, node));
         await zowe.Download.dataSet(node.getSession(), label, {
             file: getDocumentFilePath(label, node)
         });
+        console.log("11 open it in vscode")
         const document = await vscode.workspace.openTextDocument(getDocumentFilePath(label, node));
+        console.log("11 show it in vscode")
         await vscode.window.showTextDocument(document);
+        console.log("11 call save in vscode")
         await vscode.window.activeTextEditor.document.save();
     } catch (err) {
         if (err.message.includes(localize("safeSave.error.notFound", "not found"))) {
@@ -1349,13 +1395,24 @@ export async function saveFile(doc: vscode.TextDocument, datasetProvider: Datase
     if (documentSession == null) {
         log.error(localize("saveFile.log.error.session", "Couldn't locate session when saving data set!"));
     }
+
+    console.log("documentSession")
+    console.log(documentSession)
+    console.log("sesNode")
+    console.log(sesNode)
+    console.log("dataset provider")
+    console.log(datasetProvider)
+
     // If not a member
     const label = doc.fileName.substring(doc.fileName.lastIndexOf(path.sep) + 1,
         checkForAddedSuffix(doc.fileName) ? doc.fileName.lastIndexOf(".") : doc.fileName.length);
     log.debug(localize("saveFile.log.debug.saving", "Saving file ") + label);
+    console.log("Label")
+    console.log(label)
     if (!label.includes("(")) {
         try {
             // Checks if file still exists on server
+            console.log("00 checking if dataset is present")
             const response = await zowe.List.dataSet(documentSession, label);
             if (!response.apiResponse.items.length) {
                 return vscode.window.showErrorMessage(
@@ -1364,12 +1421,37 @@ export async function saveFile(doc: vscode.TextDocument, datasetProvider: Datase
         } catch (err) {
             vscode.window.showErrorMessage(err.message + "\n" + err.stack);
         }
+        // let node = (await sesNode.getChildren()).find((child) => child.label.trim() === label);
+
+        // try {
+        //     console.log("22 trying safe save")
+        //     log.debug(localize("safeSave.log.debug.invoke", "Invoking safesave for data set ") + label);
+        //     console.log("22 downloading file")
+        //     console.log(doc.fileName)
+        //     await zowe.Download.dataSet(documentSession, label, {
+        //         file: doc.fileName
+        //     })
+        //     console.log("22 open it with vscode")
+        //     const document = await vscode.workspace.openTextDocument(doc.fileName);
+        //     console.log("22 show it with vscode")
+        //     await vscode.window.showTextDocument(document);
+        //     console.log("22 save it with vscode")
+        //     await vscode.window.activeTextEditor.document.save();
+        // } catch (err) {
+        //     if (err.message.includes(localize("safeSave.error.notFound", "not found"))) {
+        //         vscode.window.showInformationMessage(localize("safeSave.file1", "Unable to find file: ") + label +
+        //         localize("safeSave.file2", " was probably deleted."));
+        //     } else {
+        //         vscode.window.showErrorMessage(err.message);
+        //     }
+        // }
     }
     try {
         const response = await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: localize("saveFile.response.save.title", "Saving data set...")
         }, () => {
+            console.log("00 uploading file to mainframe!")
             return zowe.Upload.pathToDataSet(documentSession, doc.fileName, label);  // TODO MISSED TESTING
         });
         if (response.success) {
